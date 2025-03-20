@@ -1461,7 +1461,10 @@ class LightRAG:
         loop = always_get_an_event_loop()
         return loop.run_until_complete(self.adelete_by_entity(entity_name))
 
-    async def adelete_by_entity(self, entity_name: str) -> None:
+    async def adelete_by_entity(self, entity_name: str,kb_name: str | None = None) -> None:
+        if kb_name and kb_name != self.current_kb:
+            await self.switch_kb(kb_name)
+            
         try:
             await self.entities_vdb.delete_entity(entity_name)
             await self.relationships_vdb.delete_entity_relation(entity_name)
@@ -1498,13 +1501,16 @@ class LightRAG:
             self.adelete_by_relation(source_entity, target_entity)
         )
 
-    async def adelete_by_relation(self, source_entity: str, target_entity: str) -> None:
+    async def adelete_by_relation(self, source_entity: str, target_entity: str,kb_name: str | None = None) -> None:
         """Asynchronously delete a relation between two entities.
 
         Args:
             source_entity: Name of the source entity
             target_entity: Name of the target entity
         """
+        if kb_name and kb_name != self.current_kb:
+            await self.switch_kb(kb_name)
+            
         try:
             # Check if the relation exists
             edge_exists = await self.chunk_entity_relation_graph.has_edge(
@@ -1943,7 +1949,7 @@ class LightRAG:
         return always_get_an_event_loop().run_until_complete(self.aclear_cache(modes))
 
     async def aedit_entity(
-        self, entity_name: str, updated_data: dict[str, str], allow_rename: bool = True
+        self, entity_name: str, updated_data: dict[str, str], allow_rename: bool = True,kb_name: str | None = None,
     ) -> dict[str, Any]:
         """Asynchronously edit entity information.
 
@@ -1957,6 +1963,9 @@ class LightRAG:
         Returns:
             Dictionary containing updated entity information
         """
+        if kb_name and kb_name != self.current_kb:
+            await self.switch_kb(kb_name)
+            
         try:
             # 1. Get current entity information
             node_exists = await self.chunk_entity_relation_graph.has_node(entity_name)
@@ -2141,7 +2150,7 @@ class LightRAG:
         )
 
     async def aedit_relation(
-        self, source_entity: str, target_entity: str, updated_data: dict[str, Any]
+        self, source_entity: str, target_entity: str, updated_data: dict[str, Any],kb_name: str | None = None,
     ) -> dict[str, Any]:
         """Asynchronously edit relation information.
 
@@ -2155,6 +2164,9 @@ class LightRAG:
         Returns:
             Dictionary containing updated relation information
         """
+        if kb_name and kb_name != self.current_kb:
+            await self.switch_kb(kb_name)
+            
         try:
             # 1. Get current relation information
             edge_exists = await self.chunk_entity_relation_graph.has_edge(
@@ -2260,7 +2272,7 @@ class LightRAG:
         )
 
     async def acreate_entity(
-        self, entity_name: str, entity_data: dict[str, Any]
+        self, entity_name: str, entity_data: dict[str, Any],kb_name: str | None = None,
     ) -> dict[str, Any]:
         """Asynchronously create a new entity.
 
@@ -2273,6 +2285,9 @@ class LightRAG:
         Returns:
             Dictionary containing created entity information
         """
+        if kb_name and kb_name != self.current_kb:
+            await self.switch_kb(kb_name)
+            
         try:
             # Check if entity already exists
             existing_node = await self.chunk_entity_relation_graph.has_node(entity_name)
@@ -2339,7 +2354,7 @@ class LightRAG:
         return loop.run_until_complete(self.acreate_entity(entity_name, entity_data))
 
     async def acreate_relation(
-        self, source_entity: str, target_entity: str, relation_data: dict[str, Any]
+        self, source_entity: str, target_entity: str, relation_data: dict[str, Any],kb_name: str | None = None,
     ) -> dict[str, Any]:
         """Asynchronously create a new relation between entities.
 
@@ -2460,6 +2475,7 @@ class LightRAG:
         target_entity: str,
         merge_strategy: dict[str, str] = None,
         target_entity_data: dict[str, Any] = None,
+        kb_name: str | None = None,
     ) -> dict[str, Any]:
         """Asynchronously merge multiple entities into one entity.
 
@@ -2481,6 +2497,9 @@ class LightRAG:
         Returns:
             Dictionary containing the merged entity information
         """
+        if kb_name and kb_name != self.current_kb:
+            await self.switch_kb(kb_name)
+            
         try:
             # Default merge strategy
             default_strategy = {

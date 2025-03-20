@@ -107,7 +107,8 @@ document_routers:
     query，aquery添加参数kn_name:用于控制检索知识库
     类添加参数：current_kb: str = field(default="default_kn_name")默认知识库
     apipeline_enqueue_documents添加参数kb_name 
-    函数ainsert_custom_kg、aquery_with_separate_keyword_extraction、adelete_by_doc_id
+    函数ainsert_custom_kg、aquery_with_separate_keyword_extraction、adelete_by_doc_id、acreate_entity
+    acreate_relation、aedit_entity 、aedit_relation\adelete_by_relation\amerge_entities增加参数kb_name
 
 
 
