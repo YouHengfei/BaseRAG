@@ -181,12 +181,22 @@ class DocumentManager:
         # Create input directory if it doesn't exist
         self.input_dir.mkdir(parents=True, exist_ok=True)
 
-    def scan_directory_for_new_files(self) -> List[Path]:
-        """Scan input directory for new files"""
+    def scan_directory_for_new_files(self, k_db_name:str = "default_k_db") -> List[Path]:
+        """Scan input directory for new files based on knowledge database name
+        
+        Args:
+            k_db_name: Knowledge database name that defines the subdirectory to scan
+        """
         new_files = []
+        # Use a subdirectory based on k_db_name inside the input directory
+        k_db_dir = self.input_dir / k_db_name
+        
+        # Create the knowledge database directory if it doesn't exist
+        k_db_dir.mkdir(parents=True, exist_ok=True)
+            
         for ext in self.supported_extensions:
-            logger.debug(f"Scanning for {ext} files in {self.input_dir}")
-            for file_path in self.input_dir.rglob(f"*{ext}"):
+            logger.debug(f"Scanning for {ext} files in {k_db_dir}")
+            for file_path in k_db_dir.rglob(f"*{ext}"):
                 if file_path not in self.indexed_files:
                     new_files.append(file_path)
         return new_files
@@ -465,12 +475,18 @@ async def save_temp_file(input_dir: Path, file: UploadFile = File(...)) -> Path:
     return temp_path
 
 
-async def run_scanning_process(rag: LightRAG, doc_manager: DocumentManager):
-    """Background task to scan and index documents"""
+async def run_scanning_process(rag: LightRAG, doc_manager: DocumentManager, k_db_name: str = "default_k_db"):
+    """Background task to scan and index documents
+    
+    Args:
+        rag: LightRAG instance
+        doc_manager: Document manager instance
+        k_db_name: Knowledge database name that defines the subdirectory to scan
+    """
     try:
-        new_files = doc_manager.scan_directory_for_new_files()
+        new_files = doc_manager.scan_directory_for_new_files(k_db_name=k_db_name)
         total_files = len(new_files)
-        logger.info(f"Found {total_files} new files to index.")
+        logger.info(f"Found {total_files} new files to index in knowledge base '{k_db_name}'.")
 
         for idx, file_path in enumerate(new_files):
             try:
@@ -479,7 +495,7 @@ async def run_scanning_process(rag: LightRAG, doc_manager: DocumentManager):
                 logger.error(f"Error indexing file {file_path}: {str(e)}")
 
     except Exception as e:
-        logger.error(f"Error during scanning process: {str(e)}")
+        logger.error(f"Error during scanning process for knowledge base '{k_db_name}': {str(e)}")
 
 
 def create_document_routes(
@@ -505,18 +521,21 @@ def create_document_routes(
 
     @router.post("/upload", dependencies=[Depends(optional_api_key)])
     async def upload_to_input_dir(
-        background_tasks: BackgroundTasks, file: UploadFile = File(...)
+        background_tasks: BackgroundTasks, 
+        file: UploadFile = File(...),
+        k_db_name: str = Query("default_k_db", description="Knowledge database name to store the file")
     ):
         """
         Upload a file to the input directory and index it.
 
         This API endpoint accepts a file through an HTTP POST request, checks if the
-        uploaded file is of a supported type, saves it in the specified input directory,
-        indexes it for retrieval, and returns a success status with relevant details.
+        uploaded file is of a supported type, saves it in the specified knowledge database 
+        subdirectory, indexes it for retrieval, and returns a success status with relevant details.
 
         Args:
             background_tasks: FastAPI BackgroundTasks for async processing
             file (UploadFile): The file to be uploaded. It must have an allowed extension.
+            k_db_name (str): Knowledge database name that defines the subdirectory to store the file
 
         Returns:
             InsertResponse: A response object containing the upload status and a message.
@@ -531,7 +550,12 @@ def create_document_routes(
                     detail=f"Unsupported file type. Supported types: {doc_manager.supported_extensions}",
                 )
 
-            file_path = doc_manager.input_dir / file.filename
+            # Create the knowledge database directory if it doesn't exist
+            k_db_dir = doc_manager.input_dir / k_db_name
+            k_db_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Save file to the knowledge database subdirectory
+            file_path = k_db_dir / file.filename
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
 
@@ -540,10 +564,10 @@ def create_document_routes(
 
             return InsertResponse(
                 status="success",
-                message=f"File '{file.filename}' uploaded successfully. Processing will continue in background.",
+                message=f"File '{file.filename}' uploaded successfully to knowledge base '{k_db_name}'. Processing will continue in background.",
             )
         except Exception as e:
-            logger.error(f"Error /documents/upload: {file.filename}: {str(e)}")
+            logger.error(f"Error /documents/upload: {file.filename} to {k_db_name}: {str(e)}")
             logger.error(traceback.format_exc())
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -619,7 +643,9 @@ def create_document_routes(
         "/file", response_model=InsertResponse, dependencies=[Depends(optional_api_key)]
     )
     async def insert_file(
-        background_tasks: BackgroundTasks, file: UploadFile = File(...)
+        background_tasks: BackgroundTasks, 
+        file: UploadFile = File(...),
+        k_db_name: str = Query("default_k_db", description="Knowledge database name to store the file")
     ):
         """
         Insert a file directly into the RAG system.
@@ -643,11 +669,16 @@ def create_document_routes(
                     status_code=400,
                     detail=f"Unsupported file type. Supported types: {doc_manager.supported_extensions}",
                 )
-
-            temp_path = await save_temp_file(doc_manager.input_dir, file)
+            # Create the knowledge database directory if it doesn't exist
+            k_db_dir = doc_manager.input_dir / k_db_name
+            k_db_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Copy file to the knowledge database subdirectory
+            target_path = k_db_dir / file.filename
+            # shutil.copy2(path, target_path)
 
             # Add to background tasks
-            background_tasks.add_task(pipeline_index_file, rag, temp_path)
+            background_tasks.add_task(pipeline_index_file, rag, target_path)
 
             return InsertResponse(
                 status="success",
@@ -664,7 +695,9 @@ def create_document_routes(
         dependencies=[Depends(optional_api_key)],
     )
     async def insert_batch(
-        background_tasks: BackgroundTasks, files: List[UploadFile] = File(...)
+        background_tasks: BackgroundTasks, 
+        files: List[UploadFile] = File(...),
+        k_db_name: str = Query("default_k_db", description="Knowledge database name to store the files")
     ):
         """
         Process multiple files in batch mode.
@@ -688,11 +721,12 @@ def create_document_routes(
             inserted_count = 0
             failed_files = []
             temp_files = []
-
+            k_db_dir = doc_manager.input_dir / k_db_name
+            k_db_dir.mkdir(parents=True, exist_ok=True)
             for file in files:
                 if doc_manager.is_supported_file(file.filename):
                     # Create a temporary file to save the uploaded content
-                    temp_files.append(await save_temp_file(doc_manager.input_dir, file))
+                    temp_files.append(await save_temp_file(k_db_dir, file))
                     inserted_count += 1
                 else:
                     failed_files.append(f"{file.filename} (unsupported type)")

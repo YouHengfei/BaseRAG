@@ -75,7 +75,8 @@ class LightRAG:
         default=f"./lightrag_cache_{datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}"
     )
     """Directory where cache and temporary files are stored."""
-
+    
+    current_kb: str = field(default="default_kn_name")
     # Storage
     # ---
 
@@ -301,6 +302,9 @@ class LightRAG:
         if not os.path.exists(self.working_dir):
             logger.info(f"Creating working directory {self.working_dir}")
             os.makedirs(self.working_dir)
+
+        # Create default knowledge base directory
+        self._create_kb_dir(self.current_kb)
 
         # Verify storage implementation compatibility and environment variables
         storage_configs = [
@@ -575,6 +579,7 @@ class LightRAG:
         split_by_character_only: bool = False,
         ids: str | list[str] | None = None,
         file_paths: str | list[str] | None = None,
+        kb_name: str | None = None,
     ) -> None:
         """Async Insert documents with checkpoint support
 
@@ -586,7 +591,12 @@ class LightRAG:
             split_by_character is None, this parameter is ignored.
             ids: list of unique document IDs, if not provided, MD5 hash IDs will be generated
             file_paths: list of file paths corresponding to each document, used for citation
+            kb_name: Optional knowledge base name to use for this operation
         """
+        # Switch knowledge base if needed
+        if kb_name and kb_name != self.current_kb:
+            await self.switch_kb(kb_name)
+            
         await self.apipeline_enqueue_documents(input, ids, file_paths)
         await self.apipeline_process_enqueue_documents(
             split_by_character, split_by_character_only
@@ -665,21 +675,20 @@ class LightRAG:
         input: str | list[str],
         ids: list[str] | None = None,
         file_paths: str | list[str] | None = None,
+        kb_name: str | None = None,
     ) -> None:
-        """
-        Pipeline for Processing Documents
-
-        1. Validate ids if provided or generate MD5 hash IDs
-        2. Remove duplicate contents
-        3. Generate document initial status
-        4. Filter out already processed documents
-        5. Enqueue document in status
+        """Pipeline for Processing Documents
 
         Args:
             input: Single document string or list of document strings
             ids: list of unique document IDs, if not provided, MD5 hash IDs will be generated
             file_paths: list of file paths corresponding to each document, used for citation
+            kb_name: Optional knowledge base name to use for this operation
         """
+        # Switch knowledge base if needed
+        if kb_name and kb_name != self.current_kb:
+            await self.switch_kb(kb_name)
+            
         if isinstance(input, str):
             input = [input]
         if isinstance(ids, str):
@@ -1132,7 +1141,18 @@ class LightRAG:
         custom_kg: dict[str, Any],
         full_doc_id: str = None,
         file_path: str = "custom_kg",
+        kb_name: str | None = None,
     ) -> None:
+        """
+        Args:
+            custom_kg: Custom knowledge graph data
+            full_doc_id: Optional document ID
+            file_path: File path for citation
+            kb_name: Optional knowledge base name to use for this operation
+        """
+        if kb_name and kb_name != self.current_kb:
+            await self.switch_kb(kb_name)
+            
         update_storage = False
         try:
             # Insert chunks into vector storage
@@ -1321,6 +1341,7 @@ class LightRAG:
         query: str,
         param: QueryParam = QueryParam(),
         system_prompt: str | None = None,
+        kb_name: str | None = None,
     ) -> str | AsyncIterator[str]:
         """
         Perform a async query.
@@ -1329,10 +1350,14 @@ class LightRAG:
             query (str): The query to be executed.
             param (QueryParam): Configuration parameters for query execution.
             prompt (Optional[str]): Custom prompts for fine-tuned control over the system's behavior. Defaults to None, which uses PROMPTS["rag_response"].
+            kb_name: Optional knowledge base name to use for this query
 
         Returns:
             str: The result of the query execution.
         """
+        if kb_name and kb_name != self.current_kb:
+            await self.switch_kb(kb_name)
+            
         if param.mode in ["local", "global", "hybrid"]:
             response = await kg_query(
                 query.strip(),
@@ -1395,7 +1420,11 @@ class LightRAG:
         )
 
     async def aquery_with_separate_keyword_extraction(
-        self, query: str, prompt: str, param: QueryParam = QueryParam()
+        self, 
+        query: str, 
+        prompt: str, 
+        param: QueryParam = QueryParam(),
+        kb_name: str | None = None,
     ) -> str | AsyncIterator[str]:
         """
         Async version of query_with_separate_keyword_extraction.
@@ -1404,10 +1433,11 @@ class LightRAG:
             query: User query
             prompt: Additional prompt for the query
             param: Query parameters
-
-        Returns:
-            Query response or async iterator
+            kb_name: Optional knowledge base name to use for this operation
         """
+        if kb_name and kb_name != self.current_kb:
+            await self.switch_kb(kb_name)
+            
         response = await query_with_keywords(
             query=query,
             prompt=prompt,
@@ -1536,12 +1566,20 @@ class LightRAG:
         """
         return await self.doc_status.get_docs_by_status(status)
 
-    async def adelete_by_doc_id(self, doc_id: str) -> None:
+    async def adelete_by_doc_id(
+        self, 
+        doc_id: str,
+        kb_name: str | None = None,
+    ) -> None:
         """Delete a document and all its related data
-
+        
         Args:
             doc_id: Document ID to delete
+            kb_name: Optional knowledge base name to use for this operation
         """
+        if kb_name and kb_name != self.current_kb:
+            await self.switch_kb(kb_name)
+            
         try:
             # 1. Get the document status and related data
             if not await self.doc_status.get_by_id(doc_id):
@@ -2686,19 +2724,18 @@ class LightRAG:
         output_path: str,
         file_format: Literal["csv", "excel", "md", "txt"] = "csv",
         include_vector_data: bool = False,
+        kb_name: str | None = None,
     ) -> None:
         """
-        Asynchronously exports all entities, relations, and relationships to various formats.
         Args:
-            output_path: The path to the output file (including extension).
-            file_format: Output format - "csv", "excel", "md", "txt".
-                - csv: Comma-separated values file
-                - excel: Microsoft Excel file with multiple sheets
-                - md: Markdown tables
-                - txt: Plain text formatted output
-                - table: Print formatted tables to console
-            include_vector_data: Whether to include data from the vector database.
+            output_path: The path to the output file
+            file_format: Output format
+            include_vector_data: Whether to include vector data
+            kb_name: Optional knowledge base name to use for this operation
         """
+        if kb_name and kb_name != self.current_kb:
+            await self.switch_kb(kb_name)
+            
         # Collect data
         entities_data = []
         relations_data = []
@@ -3146,3 +3183,44 @@ class LightRAG:
                 ]
             ]
         )
+
+    def _create_kb_dir(self, kb_name: str) -> str:
+        """Create directory for knowledge base and return its path."""
+        kb_dir = os.path.join(self.working_dir, kb_name)
+        if not os.path.exists(kb_dir):
+            logger.info(f"Creating knowledge base directory {kb_dir}")
+            os.makedirs(kb_dir)
+        return kb_dir
+
+    def _get_kb_dir(self, kb_name: str | None = None) -> str:
+        """Get the directory path for the specified knowledge base."""
+        kb = kb_name or self.current_kb
+        return os.path.join(self.working_dir, kb)
+
+    async def switch_kb(self, kb_name: str) -> None:
+        """Switch to a different knowledge base.
+        
+        Args:
+            kb_name: Name of the knowledge base to switch to
+        """
+        if kb_name == self.current_kb:
+            return
+
+        # Finalize current storages
+        await self.finalize_storages()
+        
+        # Update current knowledge base
+        self.current_kb = kb_name
+        
+        # Create directory for new knowledge base if needed
+        self._create_kb_dir(kb_name)
+        
+        # Reinitialize storages for new knowledge base
+        await self.initialize_storages()
+        
+        logger.info(f"Switched to knowledge base: {kb_name}")
+
+    def switch_knowledge_base(self, kb_name: str) -> None:
+        """Synchronous version of switch_kb."""
+        loop = always_get_an_event_loop()
+        return loop.run_until_complete(self.switch_kb(kb_name))
